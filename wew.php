@@ -1,11 +1,10 @@
 <?php
 /**
- * PluginHelper for OJS 3.3.0.13
- * Fungsi tetap sama:
- * - Obfuscate folder plugin
- * - Dummy loader file
- * - Mapping plugin
- * - No JSON error UI
+ * @file classes/plugins/PluginHelper.inc.php
+ *
+ * Modifikasi untuk install plugin dengan folder obfuscate
+ * Tanpa error JSON di UI OJS
+ * + FIX mapping agar selalu ke-generate (OJS 3.3.0.13)
  */
 
 import('lib.pkp.classes.site.Version');
@@ -26,8 +25,8 @@ class PluginHelper {
 
     public function extractPlugin($filePath, $originalFileName) {
         $fileManager = new FileManager();
+        $matches = array();
 
-        $matches = [];
         PKPString::regexp_match_get('/^[a-zA-Z0-9]+/', basename($originalFileName, '.tar.gz'), $matches);
         $pluginShortName = array_pop($matches);
 
@@ -36,27 +35,27 @@ class PluginHelper {
         }
 
         $pluginExtractDir = dirname($filePath) . DIRECTORY_SEPARATOR .
-            $pluginShortName . substr(md5(uniqid('', true)), 0, 10);
+            $pluginShortName . substr(md5(random_int(0, PHP_INT_MAX)), 0, 10);
 
-        if (!@mkdir($pluginExtractDir, 0775, true)) {
+        if (!mkdir($pluginExtractDir, 0775, true)) {
             throw new Exception('Could not create directory ' . $pluginExtractDir);
         }
 
         $tarBinary = Config::getVar('cli', 'tar');
 
         if (empty($tarBinary) || !file_exists($tarBinary)) {
-            $fileManager->rmtree($pluginExtractDir);
+            rmdir($pluginExtractDir);
             throw new Exception(__('manager.plugins.tarCommandNotFound'));
         }
 
         if (in_array('exec', explode(',', ini_get('disable_functions')))) {
-            throw new Exception('The "exec" PHP function has been disabled.');
+            throw new Exception('The "exec" PHP function has been disabled on your server.');
         }
 
         exec($tarBinary . ' -xzf ' . escapeshellarg($filePath) .
             ' -C ' . escapeshellarg($pluginExtractDir), $output, $returnCode);
 
-        if ($returnCode !== 0) {
+        if ($returnCode) {
             $fileManager->rmtree($pluginExtractDir);
             throw new Exception(__('form.dropzone.dictInvalidFileType'));
         }
@@ -91,35 +90,35 @@ class PluginHelper {
         $categoryPath = strtr($pluginVersion->getProductType(), '.', '/');
         $baseDir = Core::getBaseDir() . '/' . $categoryPath;
 
-        // Ensure cache dir
+        // ✅ pastikan folder cache ada
         $cacheDir = Core::getBaseDir() . '/cache/fc-cache';
         if (!is_dir($cacheDir)) {
-            @mkdir($cacheDir, 0775, true);
+            mkdir($cacheDir, 0775, true);
         }
 
-        // Obfuscate folder name
-        $obfuscatedName = substr(md5($pluginVersion->getProduct() . microtime()), 0, 12);
+        // Generate obfuscated folder name
+        $obfuscatedName = substr(md5($pluginVersion->getProduct() . time()), 0, 12);
         $pluginDest = $baseDir . '/' . $obfuscatedName;
 
         // Dummy loader file
         $dummyFile = $baseDir . '/' . $pluginVersion->getProduct() . '.php';
-        @file_put_contents($dummyFile,
-            "<?php require __DIR__ . '/{$obfuscatedName}/index.php';\n"
-        );
+        @file_put_contents($dummyFile, "<?php require __DIR__ . '/{$obfuscatedName}/index.php';\n");
 
+        // Hapus folder lama kalau ada
         if ($installedPlugin && is_dir($pluginDest)) {
             $fileManager->rmtree($pluginDest);
         }
 
+        // Copy plugin
         if (!$fileManager->copyDir($path, $pluginDest)) {
-            throw new Exception('Could not copy plugin!');
+            throw new Exception('Could not copy plugin to destination!');
         }
 
         if (!$fileManager->rmtree($path)) {
-            throw new Exception('Could not remove temp path!');
+            throw new Exception('Could not remove temporary plugin path!');
         }
 
-        // Install DB
+        // Install database
         $installFile = $pluginDest . '/' . PLUGIN_INSTALL_FILE;
 
         if (!is_file($installFile)) {
@@ -134,6 +133,7 @@ class PluginHelper {
         $params['locale'] = $site->getPrimaryLocale();
         $params['additionalLocales'] = $site->getSupportedLocales();
 
+        // Suppress output (hindari JSON error)
         ob_start();
         $installer = new Install($params, $installFile, true);
         $installer->setCurrentVersion($pluginVersion);
@@ -153,6 +153,7 @@ class PluginHelper {
         }
         ob_end_clean();
 
+        // ✅ SIMPAN MAPPING (FIXED)
         $this->saveMapping($pluginVersion->getProduct(), $obfuscatedName);
 
         $versionDao->insertVersion($pluginVersion, true);
@@ -166,11 +167,11 @@ class PluginHelper {
         $versionFile = $path . '/' . PLUGIN_VERSION_FILE;
         $pluginVersion = VersionCheck::getValidPluginVersionInfo($versionFile);
 
-        if ('plugins.' . $category !== $pluginVersion->getProductType()) {
+        if ('plugins.' . $category != $pluginVersion->getProductType()) {
             throw new Exception(__('manager.plugins.wrongCategory'));
         }
 
-        if ($plugin !== $pluginVersion->getProduct()) {
+        if ($plugin != $pluginVersion->getProduct()) {
             throw new Exception(__('manager.plugins.wrongName'));
         }
 
@@ -189,16 +190,14 @@ class PluginHelper {
 
         $mappings = $this->loadMapping();
         $obfuscatedName = $mappings[$plugin] ??
-            substr(md5($pluginVersion->getProduct() . microtime()), 0, 12);
+            substr(md5($pluginVersion->getProduct() . time()), 0, 12);
 
         $pluginDest = $categoryPath . '/' . $obfuscatedName;
 
         $dummyFile = $categoryPath . '/' . $plugin . '.php';
 
         if (!file_exists($dummyFile)) {
-            @file_put_contents($dummyFile,
-                "<?php require __DIR__ . '/{$obfuscatedName}/index.php';\n"
-            );
+            @file_put_contents($dummyFile, "<?php require __DIR__ . '/{$obfuscatedName}/index.php';\n");
         }
 
         if (is_dir($pluginDest)) {
@@ -206,11 +205,11 @@ class PluginHelper {
         }
 
         if (!$fileManager->copyDir($path, $pluginDest)) {
-            throw new Exception('Copy failed!');
+            throw new Exception('Could not copy plugin to destination!');
         }
 
         if (!$fileManager->rmtree($path)) {
-            throw new Exception('Cleanup failed!');
+            throw new Exception('Could not remove temporary plugin path!');
         }
 
         $upgradeFile = $pluginDest . '/' . PLUGIN_UPGRADE_FILE;
@@ -235,6 +234,7 @@ class PluginHelper {
             ob_end_clean();
         }
 
+        // ✅ update mapping
         $this->saveMapping($pluginVersion->getProduct(), $obfuscatedName);
 
         $pluginVersion->setCurrent(1);
@@ -257,20 +257,44 @@ class PluginHelper {
 
     private function loadMapping() {
         $mappingPath = Core::getBaseDir() . '/cache/fc-cache/mapping.txt';
-        return is_file($mappingPath)
-            ? unserialize(@file_get_contents($mappingPath)) ?: []
-            : [];
+
+        if (!is_file($mappingPath)) {
+            return [];
+        }
+
+        $data = @file_get_contents($mappingPath);
+        if (!$data) return [];
+
+        $result = @unserialize($data);
+        return is_array($result) ? $result : [];
     }
 
     private function saveMapping(string $pluginName, string $obfuscatedName): void {
-        $mappingPath = Core::getBaseDir() . '/cache/fc-cache/mapping.txt';
+        $mappingDir = Core::getBaseDir() . '/cache/fc-cache';
+        $mappingPath = $mappingDir . '/mapping.txt';
 
-        $mappings = is_file($mappingPath)
-            ? unserialize(@file_get_contents($mappingPath)) ?: []
-            : [];
+        // ✅ FIX utama: pastikan folder ada
+        if (!is_dir($mappingDir)) {
+            if (!mkdir($mappingDir, 0775, true)) {
+                throw new Exception('Failed to create mapping directory: ' . $mappingDir);
+            }
+        }
+
+        // ✅ pastikan writable
+        if (!is_writable($mappingDir)) {
+            @chmod($mappingDir, 0775);
+        }
+
+        $mappings = [];
+
+        if (is_file($mappingPath)) {
+            $mappings = unserialize(@file_get_contents($mappingPath)) ?: [];
+        }
 
         $mappings[$pluginName] = $obfuscatedName;
 
-        file_put_contents($mappingPath, serialize($mappings));
+        if (file_put_contents($mappingPath, serialize($mappings)) === false) {
+            throw new Exception('Failed to write mapping file: ' . $mappingPath);
+        }
     }
 }
