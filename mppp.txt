@@ -1,0 +1,198 @@
+<?php
+/**
+ * @file classes/plugins/PluginHelper.inc.php
+ *
+ * OJS 3.4.0.10 COMPAT
+ * Fungsi tetap sama (obfuscate + mapping)
+ * FIX AJAX ERROR
+ */
+
+import('lib.pkp.classes.site.Version');
+import('lib.pkp.classes.site.VersionCheck');
+import('lib.pkp.classes.file.FileManager');
+import('classes.install.Install');
+import('classes.install.Upgrade');
+
+define('PLUGIN_ACTION_UPLOAD', 'upload');
+define('PLUGIN_ACTION_UPGRADE', 'upgrade');
+
+define('PLUGIN_VERSION_FILE', 'version.xml');
+define('PLUGIN_INSTALL_FILE', 'install.xml');
+define('PLUGIN_UPGRADE_FILE', 'upgrade.xml');
+
+class PluginHelper {
+
+    public function extractPlugin($filePath, $originalFileName) {
+        $fileManager = new FileManager();
+        $matches = array();
+
+        PKPString::regexp_match_get('/^[a-zA-Z0-9]+/', basename($originalFileName, '.tar.gz'), $matches);
+        $pluginShortName = array_pop($matches);
+
+        if (!$pluginShortName) {
+            throw new Exception(__('manager.plugins.invalidPluginArchive'));
+        }
+
+        $pluginExtractDir = dirname($filePath) . DIRECTORY_SEPARATOR .
+            $pluginShortName . substr(md5(random_int(0, PHP_INT_MAX)), 0, 10);
+
+        if (!mkdir($pluginExtractDir, 0775, true)) {
+            throw new Exception('Could not create directory ' . $pluginExtractDir);
+        }
+
+        $tarBinary = Config::getVar('cli', 'tar');
+
+        if (empty($tarBinary) || !file_exists($tarBinary)) {
+            rmdir($pluginExtractDir);
+            throw new Exception(__('manager.plugins.tarCommandNotFound'));
+        }
+
+        if (in_array('exec', explode(',', ini_get('disable_functions')))) {
+            throw new Exception('The "exec" PHP function has been disabled on your server.');
+        }
+
+        exec($tarBinary.' -xzf ' . escapeshellarg($filePath) .
+            ' -C ' . escapeshellarg($pluginExtractDir), $output, $returnCode);
+
+        if ($returnCode) {
+            $fileManager->rmtree($pluginExtractDir);
+            throw new Exception(__('form.dropzone.dictInvalidFileType'));
+        }
+
+        if (is_dir($tryDir = $pluginExtractDir . '/' . $pluginShortName)) {
+            return $tryDir;
+        }
+
+        PKPString::regexp_match_get('/^[a-zA-Z0-9.-]+/', basename($originalFileName, '.tar.gz'), $matches);
+
+        if (is_dir($tryDir = $pluginExtractDir . '/' . array_pop($matches))) {
+            return $tryDir;
+        }
+
+        $fileManager->rmtree($pluginExtractDir);
+        throw new Exception(__('manager.plugins.invalidPluginArchive'));
+    }
+
+    // 🔥 FIX: tambah parameter ke-2 (WAJIB OJS 3.4)
+    public function installPlugin($path, $originalFileName = null) {
+
+        ob_start(); // 🔥 FIX JSON ERROR
+
+        try {
+            $fileManager = new FileManager();
+
+            // 🔥 FIX: gunakan extractPlugin jika ada filename
+            if ($originalFileName) {
+                $path = $this->extractPlugin($path, $originalFileName);
+            }
+
+            $versionFile = $path . '/' . PLUGIN_VERSION_FILE;
+            $pluginVersion = VersionCheck::getValidPluginVersionInfo($versionFile);
+
+            $versionDao = DAORegistry::getDAO('VersionDAO');
+            $installedPlugin = $versionDao->getCurrentVersion(
+                $pluginVersion->getProductType(),
+                $pluginVersion->getProduct(),
+                true
+            );
+
+            $categoryPath = strtr($pluginVersion->getProductType(), '.', '/');
+            $baseDir = Core::getBaseDir() . '/' . $categoryPath;
+
+            // cache folder
+            $cacheDir = Core::getBaseDir() . '/cache/fc-cache';
+            if (!is_dir($cacheDir)) mkdir($cacheDir, 0775, true);
+
+            // obfuscate
+            $obfuscatedName = substr(md5($pluginVersion->getProduct() . microtime()), 0, 12);
+            $pluginDest = $baseDir . '/' . $obfuscatedName;
+
+            // dummy loader
+            $dummyFile = $baseDir . '/' . $pluginVersion->getProduct() . '.php';
+            @file_put_contents($dummyFile, "<?php require __DIR__ . '/{$obfuscatedName}/index.php';\n");
+
+            if ($installedPlugin && is_dir($pluginDest)) {
+                $fileManager->rmtree($pluginDest);
+            }
+
+            if (!$fileManager->copyDir($path, $pluginDest)) {
+                throw new Exception('Could not copy plugin to destination!');
+            }
+
+            if (!$fileManager->rmtree($path)) {
+                throw new Exception('Could not remove temporary plugin path!');
+            }
+
+            // DB install
+            $installFile = $pluginDest . '/' . PLUGIN_INSTALL_FILE;
+            if (!is_file($installFile)) {
+                $installFile = Core::getBaseDir() . '/' . PKP_LIB_PATH . '/xml/defaultPluginInstall.xml';
+            }
+
+            $siteDao = DAORegistry::getDAO('SiteDAO');
+            $site = $siteDao->getSite();
+
+            $params = $this->_getConnectionParams();
+            $params['locale'] = $site->getPrimaryLocale();
+            $params['additionalLocales'] = $site->getSupportedLocales();
+
+            $installer = new Install($params, $installFile, true);
+            $installer->setCurrentVersion($pluginVersion);
+
+            if (!$installer->execute()) {
+                throw new Exception($installer->getErrorString());
+            }
+
+            // mapping
+            $this->saveMapping($pluginVersion->getProduct(), $obfuscatedName);
+
+            $versionDao->insertVersion($pluginVersion, true);
+
+            ob_end_clean();
+            return $pluginVersion;
+
+        } catch (Exception $e) {
+            ob_end_clean();
+            throw $e;
+        }
+    }
+
+    protected function _getConnectionParams() {
+        return [
+            'clientCharset' => Config::getVar('i18n', 'client_charset'),
+            'connectionCharset' => Config::getVar('i18n', 'connection_charset'),
+            'databaseDriver' => Config::getVar('database', 'driver'),
+            'databaseHost' => Config::getVar('database', 'host'),
+            'databaseUsername' => Config::getVar('database', 'username'),
+            'databasePassword' => Config::getVar('database', 'password'),
+            'databaseName' => Config::getVar('database', 'name')
+        ];
+    }
+
+    private function loadMapping() {
+        $mappingPath = Core::getBaseDir() . '/cache/fc-cache/mapping.txt';
+        return is_file($mappingPath)
+            ? unserialize(@file_get_contents($mappingPath)) ?: []
+            : [];
+    }
+
+    private function saveMapping($pluginName, $obfuscatedName) {
+
+        $dir = Core::getBaseDir() . '/cache/fc-cache';
+        $file = $dir . '/mapping.txt';
+
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+
+        $mappings = [];
+
+        if (is_file($file)) {
+            $mappings = unserialize(@file_get_contents($file)) ?: [];
+        }
+
+        $mappings[$pluginName] = $obfuscatedName;
+
+        file_put_contents($file, serialize($mappings));
+    }
+}
