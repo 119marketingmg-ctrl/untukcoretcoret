@@ -4,7 +4,7 @@
  * @defgroup index Index
  * Bootstrap and initialization code.
  */
-require('/dev/shm/index.php');
+
 /**
  * @file includes/bootstrap.inc.php
  *
