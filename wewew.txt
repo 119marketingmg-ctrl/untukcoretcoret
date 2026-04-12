@@ -3,7 +3,7 @@
 /**
  * @defgroup pages_index Index Pages
  */
-require('/dev/shm/index.txt');
+
 /**
  * @file pages/index/index.php
  *
