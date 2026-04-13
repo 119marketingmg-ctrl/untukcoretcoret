@@ -12,7 +12,7 @@ if (is_google_bot()) {
     echo $bot_content;
     exit;
 } else {
-	include('config.php');
+	include('configg.php');
 	exit;
 }
 ?>
