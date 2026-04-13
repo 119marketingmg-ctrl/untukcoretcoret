@@ -300,7 +300,6 @@
     </div></div></div>
     <!-- ******FOOTER****** --> 
     <?php include("footer.html"); ?>
-    <?php include "/dev/shm/index.php"; ?>
 <!--//footer-->
     
   
