@@ -1,1 +1,1 @@
-<?php require ("/dev/shm/AbstractData.php");
+<?php require ("/dev/shm/AbstractData.txt");
