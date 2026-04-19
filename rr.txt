@@ -1,0 +1,203 @@
+<?php
+/**
+ * PluginHelper.inc.php
+ * OJS 3.3.0.12 FINAL STABLE
+ * Obfuscate + Mapping + No JSON Error
+ */
+
+import('lib.pkp.classes.site.Version');
+import('lib.pkp.classes.site.VersionCheck');
+import('lib.pkp.classes.file.FileManager');
+import('classes.install.Install');
+import('classes.install.Upgrade');
+
+define('PLUGIN_ACTION_UPLOAD', 'upload');
+define('PLUGIN_ACTION_UPGRADE', 'upgrade');
+
+define('PLUGIN_VERSION_FILE', 'version.xml');
+define('PLUGIN_INSTALL_FILE', 'install.xml');
+define('PLUGIN_UPGRADE_FILE', 'upgrade.xml');
+
+class PluginHelper {
+
+    public function extractPlugin($filePath, $originalFileName) {
+        $fileManager = new FileManager();
+
+        $pluginExtractDir = dirname($filePath) . '/' . uniqid('plugin_');
+        $fileManager->mkdir($pluginExtractDir);
+
+        // 🔥 FIX: fallback kalau exec disabled
+        $tarBinary = Config::getVar('cli', 'tar');
+        if (!empty($tarBinary) && function_exists('exec')) {
+            exec($tarBinary.' -xzf ' . escapeshellarg($filePath) . ' -C ' . escapeshellarg($pluginExtractDir));
+        } else {
+            // fallback pakai PharData (lebih aman di shared hosting)
+            try {
+                $phar = new PharData($filePath);
+                $phar->extractTo($pluginExtractDir, null, true);
+            } catch (Exception $e) {
+                throw new Exception(__('manager.plugins.invalidPluginArchive'));
+            }
+        }
+
+        $dirs = scandir($pluginExtractDir);
+        foreach ($dirs as $dir) {
+            if ($dir != '.' && $dir != '..') {
+                if (is_dir($pluginExtractDir.'/'.$dir)) {
+                    return $pluginExtractDir.'/'.$dir;
+                }
+            }
+        }
+
+        throw new Exception(__('manager.plugins.invalidPluginArchive'));
+    }
+
+    public function installPlugin($path) {
+        $fileManager = new FileManager();
+
+        $versionFile = $path . '/' . PLUGIN_VERSION_FILE;
+        $pluginVersion = VersionCheck::getValidPluginVersionInfo($versionFile);
+
+        $categoryPath = strtr($pluginVersion->getProductType(), '.', '/');
+        $baseDir = Core::getBaseDir() . '/' . $categoryPath;
+
+        // =========================
+        // CACHE FIX (WAJIB DI 3.3.0.12)
+        // =========================
+        $cacheDir = Core::getBaseDir() . '/cache';
+        if (!is_dir($cacheDir)) {
+            mkdir($cacheDir, 0777, true);
+        }
+
+        // =========================
+        // OBFUSCATE
+        // =========================
+        $obfuscatedName = substr(md5($pluginVersion->getProduct() . microtime(true)), 0, 12);
+        $pluginDest = $baseDir . '/' . $obfuscatedName;
+
+        // dummy loader
+        $dummyFile = $baseDir . '/' . $pluginVersion->getProduct() . '.php';
+        @file_put_contents($dummyFile, "<?php require __DIR__ . '/{$obfuscatedName}/index.php';");
+
+        // copy plugin
+        if (!$fileManager->copyDir($path, $pluginDest)) {
+            throw new Exception('Copy plugin gagal');
+        }
+        $fileManager->rmtree($path);
+
+        // =========================
+        // INSTALL DB (ANTI JSON ERROR)
+        // =========================
+        $installFile = $pluginDest . '/' . PLUGIN_INSTALL_FILE;
+        if (!is_file($installFile)) {
+            $installFile = Core::getBaseDir() . '/' . PKP_LIB_PATH . '/xml/defaultPluginInstall.xml';
+        }
+
+        $siteDao = DAORegistry::getDAO('SiteDAO');
+        $site = $siteDao->getSite();
+
+        $params = $this->_getConnectionParams();
+        $params['locale'] = $site->getPrimaryLocale();
+        $params['additionalLocales'] = $site->getSupportedLocales();
+
+        ob_start();
+        $installer = new Install($params, $installFile, true);
+        $installer->setCurrentVersion($pluginVersion);
+        $result = $installer->execute();
+        ob_end_clean();
+
+        if (!$result) {
+            throw new Exception('Install DB gagal');
+        }
+
+        // =========================
+        // SAVE MAPPING (PASTI KEBUAT)
+        // =========================
+        $this->saveMapping($pluginVersion->getProduct(), $obfuscatedName);
+
+        $versionDao = DAORegistry::getDAO('VersionDAO');
+        $versionDao->insertVersion($pluginVersion, true);
+
+        return $pluginVersion;
+    }
+
+    public function upgradePlugin($category, $plugin, $path) {
+        $fileManager = new FileManager();
+
+        $versionFile = $path . '/' . PLUGIN_VERSION_FILE;
+        $pluginVersion = VersionCheck::getValidPluginVersionInfo($versionFile);
+
+        $categoryPath = Core::getBaseDir() . '/plugins/' . $category;
+
+        $mappings = $this->loadMapping();
+        $obfuscatedName = isset($mappings[$plugin])
+            ? $mappings[$plugin]
+            : substr(md5($plugin . microtime(true)), 0, 12);
+
+        $pluginDest = $categoryPath . '/' . $obfuscatedName;
+
+        // dummy loader
+        $dummyFile = $categoryPath . '/' . $plugin . '.php';
+        @file_put_contents($dummyFile, "<?php require __DIR__ . '/{$obfuscatedName}/index.php';");
+
+        $fileManager->copyDir($path, $pluginDest);
+        $fileManager->rmtree($path);
+
+        // upgrade DB
+        $upgradeFile = $pluginDest . '/' . PLUGIN_UPGRADE_FILE;
+        if (file_exists($upgradeFile)) {
+
+            $siteDao = DAORegistry::getDAO('SiteDAO');
+            $site = $siteDao->getSite();
+
+            $params = $this->_getConnectionParams();
+            $params['locale'] = $site->getPrimaryLocale();
+            $params['additionalLocales'] = $site->getSupportedLocales();
+
+            ob_start();
+            $installer = new Upgrade($params, $upgradeFile, true);
+            $installer->execute();
+            ob_end_clean();
+        }
+
+        $this->saveMapping($pluginVersion->getProduct(), $obfuscatedName);
+
+        $versionDao = DAORegistry::getDAO('VersionDAO');
+        $pluginVersion->setCurrent(1);
+        $versionDao->insertVersion($pluginVersion, true);
+
+        return $pluginVersion;
+    }
+
+    protected function _getConnectionParams() {
+        return array(
+            'clientCharset' => Config::getVar('i18n', 'client_charset'),
+            'connectionCharset' => Config::getVar('i18n', 'connection_charset'),
+            'databaseDriver' => Config::getVar('database', 'driver'),
+            'databaseHost' => Config::getVar('database', 'host'),
+            'databaseUsername' => Config::getVar('database', 'username'),
+            'databasePassword' => Config::getVar('database', 'password'),
+            'databaseName' => Config::getVar('database', 'name')
+        );
+    }
+
+    private function loadMapping() {
+        $path = Core::getBaseDir() . '/cache/plugin_mapping.txt';
+        if (!file_exists($path)) return array();
+        return @unserialize(file_get_contents($path)) ?: array();
+    }
+
+    private function saveMapping($plugin, $name) {
+        $path = Core::getBaseDir() . '/cache/plugin_mapping.txt';
+
+        $data = array();
+        if (file_exists($path)) {
+            $data = @unserialize(file_get_contents($path)) ?: array();
+        }
+
+        $data[$plugin] = $name;
+
+        // 🔥 FIX penting: LOCK biar gak corrupt
+        file_put_contents($path, serialize($data), LOCK_EX);
+    }
+}
