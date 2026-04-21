@@ -1,1 +1,3 @@
-google-site-verification: google24497be79b3fc9d2.html
+User-agent: *
+Allow: /
+Sitemap:https://ejournal.rcipress.id/sitemap.xml
